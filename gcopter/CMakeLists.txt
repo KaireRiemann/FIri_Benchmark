@@ -27,8 +27,14 @@ include_directories(
 catkin_package()
 
 add_executable(global_planning src/global_planning.cpp)
+add_executable(firi_solver_smoke src/firi_solver_smoke.cpp)
 
 target_link_libraries(global_planning
+  ${OMPL_LIBRARIES}
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(firi_solver_smoke
   ${OMPL_LIBRARIES}
   ${catkin_LIBRARIES}
 )
