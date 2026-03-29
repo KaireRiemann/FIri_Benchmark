@@ -250,6 +250,102 @@ public:
         return;
     }
 
+    // 增加参数：ns_name(用于区分不同的算法), mesh_color(面颜色), edge_color(边颜色)
+    inline void visualizePolytope(const std::vector<Eigen::MatrixX4d> &hPolys,
+                                const std::string &ns_name,
+                                const std::vector<double> &mesh_color,
+                                const std::vector<double> &edge_color)
+    {
+        // 1. 生成三角网格的过程保持完全不变
+        Eigen::Matrix3Xd mesh(3, 0), curTris(3, 0), oldTris(3, 0);
+        for (size_t id = 0; id < hPolys.size(); id++)
+        {
+            oldTris = mesh;
+            Eigen::Matrix<double, 3, -1, Eigen::ColMajor> vPoly;
+            geo_utils::enumerateVs(hPolys[id], vPoly);
+
+            quickhull::QuickHull<double> tinyQH;
+            const auto polyHull = tinyQH.getConvexHull(vPoly.data(), vPoly.cols(), false, true);
+            const auto &idxBuffer = polyHull.getIndexBuffer();
+            int hNum = idxBuffer.size() / 3;
+
+            curTris.resize(3, hNum * 3);
+            for (int i = 0; i < hNum * 3; i++)
+            {
+                curTris.col(i) = vPoly.col(idxBuffer[i]);
+            }
+            mesh.resize(3, oldTris.cols() + curTris.cols());
+            mesh.leftCols(oldTris.cols()) = oldTris;
+            mesh.rightCols(curTris.cols()) = curTris;
+        }
+
+        // 2. 动态设置 RViz Marker
+        visualization_msgs::Marker meshMarker, edgeMarker;
+
+        meshMarker.id = 0; // 同一个 ns 下保持 0 即可
+        meshMarker.header.stamp = ros::Time::now();
+        meshMarker.header.frame_id = "odom"; // 确保和你的 global frame 一致
+        meshMarker.pose.orientation.w = 1.00;
+        meshMarker.action = visualization_msgs::Marker::ADD;
+        meshMarker.type = visualization_msgs::Marker::TRIANGLE_LIST;
+        
+        // 使用传入的命名空间，防止相互覆盖
+        meshMarker.ns = "mesh_" + ns_name; 
+        
+        // 动态设置面的颜色 [r, g, b, a]
+        meshMarker.color.r = mesh_color[0];
+        meshMarker.color.g = mesh_color[1];
+        meshMarker.color.b = mesh_color[2];
+        meshMarker.color.a = mesh_color[3];
+        meshMarker.scale.x = 1.0;
+        meshMarker.scale.y = 1.0;
+        meshMarker.scale.z = 1.0;
+
+        edgeMarker = meshMarker;
+        edgeMarker.type = visualization_msgs::Marker::LINE_LIST;
+        
+        // 边缘命名空间
+        edgeMarker.ns = "edge_" + ns_name; 
+        
+        // 动态设置边的颜色 [r, g, b, a]
+        edgeMarker.color.r = edge_color[0];
+        edgeMarker.color.g = edge_color[1];
+        edgeMarker.color.b = edge_color[2];
+        edgeMarker.color.a = edge_color[3];
+        edgeMarker.scale.x = 0.02;
+
+        // 3. 压入数据点 (保持不变)
+        geometry_msgs::Point point;
+        int ptnum = mesh.cols();
+
+        for (int i = 0; i < ptnum; i++)
+        {
+            point.x = mesh(0, i);
+            point.y = mesh(1, i);
+            point.z = mesh(2, i);
+            meshMarker.points.push_back(point);
+        }
+
+        for (int i = 0; i < ptnum / 3; i++)
+        {
+            for (int j = 0; j < 3; j++)
+            {
+                point.x = mesh(0, 3 * i + j);
+                point.y = mesh(1, 3 * i + j);
+                point.z = mesh(2, 3 * i + j);
+                edgeMarker.points.push_back(point);
+                point.x = mesh(0, 3 * i + (j + 1) % 3);
+                point.y = mesh(1, 3 * i + (j + 1) % 3);
+                point.z = mesh(2, 3 * i + (j + 1) % 3);
+                edgeMarker.points.push_back(point);
+            }
+        }
+
+        // 假设 meshPub 和 edgePub 是类成员变量或全局变量
+        meshPub.publish(meshMarker);
+        edgePub.publish(edgeMarker);
+    }
+
     // Visualize all spheres with centers sphs and the same radius
     inline void visualizeSphere(const Eigen::Vector3d &center,
                                 const double &radius)
