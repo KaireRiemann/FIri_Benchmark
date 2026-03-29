@@ -22,12 +22,13 @@
     SOFTWARE.
 */
 
-#ifndef SFC_GEN_HPP
-#define SFC_GEN_HPP
+#ifndef SFC_GEN_OPT_HPP
+#define SFC_GEN_OPT_HPP
 
 #include "geo_utils.hpp"
 #include "firi.hpp"
 #include "firi_opt.hpp"
+#include "firi_nd.hpp"
 
 #include <ompl/util/Console.h>
 #include <ompl/base/SpaceInformation.h>
@@ -36,12 +37,12 @@
 #include <ompl/base/objectives/PathLengthOptimizationObjective.h>
 #include <ompl/base/DiscreteMotionValidator.h>
 
+#include<chrono>
 #include <deque>
 #include <memory>
 #include <Eigen/Eigen>
-#include<chrono>
 
-namespace sfc_gen
+namespace sfc_gen_opt
 {
 
     template <typename Map>
@@ -122,6 +123,7 @@ namespace sfc_gen
                             const double &progress,
                             const double &range,
                             std::vector<Eigen::MatrixX4d> &hpolys,
+                            std::vector<Eigen::MatrixX4d> &hpolys_new,
                             const double eps = 1.0e-6)
     {
         hpolys.clear();
@@ -143,7 +145,7 @@ namespace sfc_gen
 
         double total_time_old = 0.0;
         double total_time_new = 0.0;
-        
+
         for (int i = 1; i < n;)
         {
             a = b;
@@ -175,35 +177,64 @@ namespace sfc_gen
             }
             Eigen::Map<const Eigen::Matrix<double, 3, -1, Eigen::ColMajor>> pc(valid_pc[0].data(), 3, valid_pc.size());
 
-           
+            //firi::firi(bd, pc, a, b, hp);
             auto t1 = std::chrono::high_resolution_clock::now();
             firi::firi(bd, pc, a, b, hp);
             auto t2 = std::chrono::high_resolution_clock::now();
             total_time_old += std::chrono::duration<double, std::milli>(t2 - t1).count();
-            
+
+            // auto t3 = std::chrono::high_resolution_clock::now();
+            // firi_opt::firi_opt(bd,pc,a,b,hp_new);
+            // auto t4 = std::chrono::high_resolution_clock::now();
+            // total_time_new += std::chrono::duration<double, std::milli>(t4 - t3).count();
+
             auto t3 = std::chrono::high_resolution_clock::now();
-            firi_opt::firi_opt(bd,pc,a,b,hp_new);
+            firi_nd::firi_opt<3>(bd,pc,a,b,hp_new);
             auto t4 = std::chrono::high_resolution_clock::now();
             total_time_new += std::chrono::duration<double, std::milli>(t4 - t3).count();
-           
 
             if (hpolys.size() != 0)
             {
-       
                 const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
-                if (3 <= ((hp * ah).array() > -eps).cast<int>().sum() +
+                if(3 <= ((hp * ah).array() > -eps).cast<int>().sum() +
                              ((hpolys.back() * ah).array() > -eps).cast<int>().sum())
                 {
-                    firi::firi(bd, pc, a, a, gap, 1);
-                    firi_opt::firi_opt(bd,pc,a,a,gap_new,1);
+                    //firi::firi(bd, pc, a, a, gap, 1);
+                    auto t5 = std::chrono::high_resolution_clock::now();
+                    firi::firi(bd,pc,a,a,gap,1);
+                    auto t6 = std::chrono::high_resolution_clock::now();
+                    total_time_old += std::chrono::duration<double, std::milli>(t6 - t5).count();
                     hpolys.emplace_back(gap);
+
                 }
+                
+            }
+
+            if (hpolys_new.size() != 0)
+            {
+                const Eigen::Vector4d ah(a(0), a(1), a(2), 1.0);
+                if (3 <= ((hp_new * ah).array() > -eps).cast<int>().sum() +
+                             ((hpolys_new.back() * ah).array() > -eps).cast<int>().sum())
+                {
+                    //firi::firi(bd, pc, a, a, gap, 1);
+                    auto t7 = std::chrono::high_resolution_clock::now();
+                    firi_nd::firi_opt<3>(bd,pc,a,a,gap_new,1);
+                    auto t8 = std::chrono::high_resolution_clock::now();
+                    total_time_new += std::chrono::duration<double, std::milli>(t8 - t7).count();
+                    hpolys_new.emplace_back(gap_new);
+                }
+                
             }
 
             hpolys.emplace_back(hp);
+            hpolys_new.emplace_back(hp_new);
         }
+
         std::cout<<"firi generate time : "<< total_time_old<<"ms"<<std::endl;
         std::cout<<"hom-firi generate time : "<<total_time_new<<"ms"<<std::endl;
+        // std::cout<<"firi generate volume : "<< total_volume_old<<std::endl;
+        // std::cout<<"hom-firi generate volume : "<<total_volumw_new<<std::endl;
+        // std::cout<<"volum radio : "<<volume_ratio<<std::endl;
     }
 
     inline void shortCut(std::vector<Eigen::MatrixX4d> &hpolys)
@@ -246,7 +277,34 @@ namespace sfc_gen
             hpolys.push_back(htemp[ele]);
         }
     }
+    
+    inline double calculateExactPolyhedronVolume(const Eigen::MatrixX4d &hPoly)
+    {
+        Eigen::Matrix<double, 3, -1, Eigen::ColMajor> vPoly;
+        geo_utils::enumerateVs(hPoly, vPoly);
 
+        if (vPoly.cols() < 4) {
+            return 0.0;
+        }
+
+        quickhull::QuickHull<double> tinyQH;
+        const auto polyHull = tinyQH.getConvexHull(vPoly.data(), vPoly.cols(), false, true);
+        const auto &idxBuffer = polyHull.getIndexBuffer();
+        int numTris = idxBuffer.size() / 3;
+
+        double exact_volume = 0.0;
+
+        for (int i = 0; i < numTris; ++i)
+        {
+            Eigen::Vector3d p1 = vPoly.col(idxBuffer[3 * i + 0]);
+            Eigen::Vector3d p2 = vPoly.col(idxBuffer[3 * i + 1]);
+            Eigen::Vector3d p3 = vPoly.col(idxBuffer[3 * i + 2]);
+            
+            exact_volume += p1.dot(p2.cross(p3)); 
+        }
+
+        return std::abs(exact_volume) / 6.0;
+    }
 }
 
 #endif
