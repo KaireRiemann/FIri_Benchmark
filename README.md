@@ -1,3 +1,7 @@
+# FIri_Benchmark
+
+This repository is based on GCOPTER and contains the FIRI benchmark work, including `firi`, `firi_opt`, `firi_nd`, and the current `firi_socp` comparison pipeline.
+
 # GCOPTER
 
 __GCOPTER__ is an efficient and versatile multicopter trajectory optimizer built upon a novel sparse trajectory representation named [__MINCO__](https://arxiv.org/pdf/2103.00190.pdf). __User-defined state-input constraints__ for dynamics involving [__nonlinear drag effects__](https://github.com/ZJU-FAST-Lab/GCOPTER/blob/main/misc/flatness.pdf) are supported.
