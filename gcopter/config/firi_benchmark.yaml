@@ -1,0 +1,62 @@
+MapTopic: /voxel_map
+OutputDir: /tmp/firi_benchmark
+RunId: ''
+DensityLabel: medium
+BenchmarkMode: all
+ManifestIn: ''
+ManifestOut: ''
+
+MapSeed: 1024
+MasterSeed: 20260622
+DilateRadius: 0.5
+VoxelWidth: 0.25
+MapBound: [-25.0, 25.0, -25.0, 25.0, 0.0, 8.0]
+TimeoutRRT: 0.02
+
+LocalRange: 3.0
+CorridorProgress: 7.0
+PointSeedCount: 50
+LineSeedCountPerLength: 50
+LineLengths: [0.5, 1.5, 3.0]
+PlanningCaseCount: 20
+Repeats: 5
+WarmupRepeats: 1
+MaxSamplingAttempts: 10000
+PlanningMinDistance: 8.0
+PlanningMaxDistance: 45.0
+
+OuterStopMode: convergence
+MaxOuterIterations: 10
+RelativeVolumeTolerance: 0.02
+GeometricEpsilon: 1.0e-6
+EnableMonotonicAcceptance: false
+AcceptanceTolerance: 1.0e-9
+
+HomAlpha: 50.0
+HomNormalizationPenaltyLambda: 500.0
+HomMinPositiveDiagonal: 1.0e-7
+HomRecoveryMargin: 1.0e-10
+MvieFeasibilityTolerance: 1.0e-7
+MvieActiveConstraintTolerance: 1.0e-3
+
+EnableVisualization: false
+VisualizationLocalCaseCount: 8
+VisualizationFrameId: map
+
+MaxVelMag: 4.0
+MaxBdrMag: 2.1
+MaxTiltAngle: 1.05
+MinThrust: 2.0
+MaxThrust: 12.0
+VehicleMass: 0.61
+GravAcc: 9.8
+HorizDrag: 0.70
+VertDrag: 0.80
+ParasDrag: 0.01
+SpeedEps: 0.0001
+WeightT: 20.0
+ChiVec: [1.0e+4, 1.0e+4, 1.0e+4, 1.0e+4, 1.0e+5]
+SmoothingEps: 1.0e-2
+IntegralIntervs: 16
+RelCostTol: 1.0e-5
+TrajectoryValidationDt: 0.05

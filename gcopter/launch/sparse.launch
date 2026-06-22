@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  <arg name="map_seed" default="1024"/>
+  <arg name="master_seed" default="20260622"/>
+  <arg name="output_dir" default="/tmp/firi_benchmark"/>
+  <arg name="benchmark_mode" default="all"/>
+  <arg name="run_id" default=""/>
+  <arg name="resolution" default="0.25"/>
+  <arg name="map_size_x" default="50.0"/>
+  <arg name="map_size_y" default="50.0"/>
+  <arg name="map_size_z" default="8.0"/>
+  <arg name="map_x_origin" default="-25.0"/>
+  <arg name="map_y_origin" default="-25.0"/>
+  <arg name="map_z_origin" default="0.0"/>
+  <arg name="map_frame_id" default="map"/>
+  <arg name="point_seed_count" default="50"/>
+  <arg name="line_seed_count_per_length" default="50"/>
+  <arg name="planning_case_count" default="20"/>
+  <arg name="repeats" default="5"/>
+  <arg name="warmup_repeats" default="1"/>
+  <arg name="enable_visualization" default="false"/>
+  <arg name="rviz" default="false"/>
+
+  <include file="$(find gcopter)/launch/firi_benchmark.launch">
+    <arg name="density_label" value="sparse"/>
+    <arg name="map_seed" value="$(arg map_seed)"/>
+    <arg name="master_seed" value="$(arg master_seed)"/>
+    <arg name="output_dir" value="$(arg output_dir)"/>
+    <arg name="benchmark_mode" value="$(arg benchmark_mode)"/>
+    <arg name="run_id" value="$(arg run_id)"/>
+    <arg name="resolution" value="$(arg resolution)"/>
+    <arg name="map_size_x" value="$(arg map_size_x)"/>
+    <arg name="map_size_y" value="$(arg map_size_y)"/>
+    <arg name="map_size_z" value="$(arg map_size_z)"/>
+    <arg name="map_x_origin" value="$(arg map_x_origin)"/>
+    <arg name="map_y_origin" value="$(arg map_y_origin)"/>
+    <arg name="map_z_origin" value="$(arg map_z_origin)"/>
+    <arg name="map_frame_id" value="$(arg map_frame_id)"/>
+    <arg name="cylinder_ratio" value="0.03"/>
+    <arg name="circle_ratio" value="0.00"/>
+    <arg name="gate_ratio" value="0.00"/>
+    <arg name="ellip_ratio" value="0.00"/>
+    <arg name="poly_ratio" value="0.003"/>
+    <arg name="point_seed_count" value="$(arg point_seed_count)"/>
+    <arg name="line_seed_count_per_length" value="$(arg line_seed_count_per_length)"/>
+    <arg name="planning_case_count" value="$(arg planning_case_count)"/>
+    <arg name="repeats" value="$(arg repeats)"/>
+    <arg name="warmup_repeats" value="$(arg warmup_repeats)"/>
+    <arg name="enable_visualization" value="$(arg enable_visualization)"/>
+    <arg name="rviz" value="$(arg rviz)"/>
+  </include>
+</launch>

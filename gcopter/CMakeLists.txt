@@ -4,7 +4,7 @@ project(gcopter)
 
 set(CMAKE_CXX_FLAGS "-std=c++14")
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -fPIC")
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -fPIC -DNDEBUG")
 
 find_package(Eigen3 REQUIRED)
 find_package(ompl REQUIRED)
@@ -28,6 +28,7 @@ catkin_package()
 
 add_executable(global_planning src/global_planning.cpp)
 add_executable(firi_solver_smoke src/firi_solver_smoke.cpp)
+add_executable(firi_benchmark_node src/firi_benchmark_node.cpp)
 
 target_link_libraries(global_planning
   ${OMPL_LIBRARIES}
@@ -35,6 +36,11 @@ target_link_libraries(global_planning
 )
 
 target_link_libraries(firi_solver_smoke
+  ${OMPL_LIBRARIES}
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(firi_benchmark_node
   ${OMPL_LIBRARIES}
   ${catkin_LIBRARIES}
 )
