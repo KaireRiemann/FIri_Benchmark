@@ -58,6 +58,9 @@ def main():
     parser.add_argument("--point-seeds", type=int, default=50)
     parser.add_argument("--line-seeds-per-length", type=int, default=50)
     parser.add_argument("--planning-cases", type=int, default=20)
+    parser.add_argument("--planning-min-distance", type=float, default=8.0)
+    parser.add_argument("--planning-max-distance", type=float, default=45.0)
+    parser.add_argument("--timeout-rrt", type=float, default=0.02)
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--warmup-repeats", type=int, default=1)
     parser.add_argument("--resolution", type=float, default=0.25)
@@ -101,6 +104,9 @@ def main():
                 f"point_seed_count:={args.point_seeds}",
                 f"line_seed_count_per_length:={args.line_seeds_per_length}",
                 f"planning_case_count:={args.planning_cases}",
+                f"planning_min_distance:={args.planning_min_distance}",
+                f"planning_max_distance:={args.planning_max_distance}",
+                f"timeout_rrt:={args.timeout_rrt}",
                 f"repeats:={args.repeats}",
                 f"warmup_repeats:={args.warmup_repeats}",
                 f"enable_visualization:={'true' if args.enable_visualization else 'false'}",

@@ -27,10 +27,16 @@ include_directories(
 catkin_package()
 
 add_executable(global_planning src/global_planning.cpp)
+add_executable(global_planning_benchmark_node src/global_planning_benchmark_node.cpp)
 add_executable(firi_solver_smoke src/firi_solver_smoke.cpp)
 add_executable(firi_benchmark_node src/firi_benchmark_node.cpp)
 
 target_link_libraries(global_planning
+  ${OMPL_LIBRARIES}
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(global_planning_benchmark_node
   ${OMPL_LIBRARIES}
   ${catkin_LIBRARIES}
 )

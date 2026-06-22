@@ -11,8 +11,13 @@
 #include <Eigen/Eigen>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <cmath>
+#include <cstdio>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 namespace firi_benchmark
@@ -51,6 +56,61 @@ namespace firi_benchmark
         int pieces = 0;
         std::string failure_reason;
     };
+
+    struct TrajectoryTrialPod
+    {
+        int setup_success = 0;
+        int optimize_success = 0;
+        int collision_free = 0;
+        int sampled_collision_count = 0;
+        double setup_ms = 0.0;
+        double optimize_ms = 0.0;
+        double cost = INFINITY;
+        double duration = 0.0;
+        int pieces = 0;
+        char failure_reason[128] = {0};
+    };
+
+    inline void copyFailureReason(const std::string &reason, char *dst, const std::size_t dst_size)
+    {
+        if (dst_size == 0)
+        {
+            return;
+        }
+        std::snprintf(dst, dst_size, "%s", reason.c_str());
+    }
+
+    inline TrajectoryTrialPod toPod(const TrajectoryTrialResult &result)
+    {
+        TrajectoryTrialPod pod;
+        pod.setup_success = result.setup_success ? 1 : 0;
+        pod.optimize_success = result.optimize_success ? 1 : 0;
+        pod.collision_free = result.collision_free ? 1 : 0;
+        pod.sampled_collision_count = result.sampled_collision_count;
+        pod.setup_ms = result.setup_ms;
+        pod.optimize_ms = result.optimize_ms;
+        pod.cost = result.cost;
+        pod.duration = result.duration;
+        pod.pieces = result.pieces;
+        copyFailureReason(result.failure_reason, pod.failure_reason, sizeof(pod.failure_reason));
+        return pod;
+    }
+
+    inline TrajectoryTrialResult fromPod(const TrajectoryTrialPod &pod)
+    {
+        TrajectoryTrialResult result;
+        result.setup_success = pod.setup_success != 0;
+        result.optimize_success = pod.optimize_success != 0;
+        result.collision_free = pod.collision_free != 0;
+        result.sampled_collision_count = pod.sampled_collision_count;
+        result.setup_ms = pod.setup_ms;
+        result.optimize_ms = pod.optimize_ms;
+        result.cost = pod.cost;
+        result.duration = pod.duration;
+        result.pieces = pod.pieces;
+        result.failure_reason = std::string(pod.failure_reason);
+        return result;
+    }
 
     inline int countTrajectoryCollisions(const Trajectory<5> &traj,
                                          const voxel_map::VoxelMap &map,
@@ -140,11 +200,11 @@ namespace firi_benchmark
         return true;
     }
 
-    inline TrajectoryTrialResult optimizeTrajectoryInCorridor(const Eigen::Vector3d &start,
-                                                              const Eigen::Vector3d &goal,
-                                                              const std::vector<Eigen::MatrixX4d> &hpolys,
-                                                              const TrajectoryOptimizerConfig &config,
-                                                              const voxel_map::VoxelMap &map)
+    inline TrajectoryTrialResult optimizeTrajectoryInCorridorUnsafe(const Eigen::Vector3d &start,
+                                                                    const Eigen::Vector3d &goal,
+                                                                    const std::vector<Eigen::MatrixX4d> &hpolys,
+                                                                    const TrajectoryOptimizerConfig &config,
+                                                                    const voxel_map::VoxelMap &map)
     {
         TrajectoryTrialResult result;
         if (hpolys.empty())
@@ -225,6 +285,99 @@ namespace firi_benchmark
             result.failure_reason = "trajectory_collision";
         }
         return result;
+    }
+
+    inline TrajectoryTrialResult optimizeTrajectoryInCorridor(const Eigen::Vector3d &start,
+                                                              const Eigen::Vector3d &goal,
+                                                              const std::vector<Eigen::MatrixX4d> &hpolys,
+                                                              const TrajectoryOptimizerConfig &config,
+                                                              const voxel_map::VoxelMap &map)
+    {
+        int pipe_fd[2];
+        if (pipe(pipe_fd) != 0)
+        {
+            TrajectoryTrialResult result;
+            result.failure_reason = "trajectory_pipe_failed";
+            return result;
+        }
+
+        const pid_t pid = fork();
+        if (pid < 0)
+        {
+            close(pipe_fd[0]);
+            close(pipe_fd[1]);
+            TrajectoryTrialResult result;
+            result.failure_reason = "trajectory_fork_failed";
+            return result;
+        }
+
+        if (pid == 0)
+        {
+            close(pipe_fd[0]);
+            TrajectoryTrialPod pod = toPod(optimizeTrajectoryInCorridorUnsafe(start, goal, hpolys, config, map));
+            const char *bytes = reinterpret_cast<const char *>(&pod);
+            std::size_t remaining = sizeof(pod);
+            while (remaining > 0)
+            {
+                const ssize_t written = write(pipe_fd[1], bytes, remaining);
+                if (written <= 0)
+                {
+                    break;
+                }
+                bytes += written;
+                remaining -= static_cast<std::size_t>(written);
+            }
+            close(pipe_fd[1]);
+            _exit(0);
+        }
+
+        close(pipe_fd[1]);
+        TrajectoryTrialPod pod;
+        char *bytes = reinterpret_cast<char *>(&pod);
+        std::size_t remaining = sizeof(pod);
+        bool complete_read = true;
+        while (remaining > 0)
+        {
+            const ssize_t n = read(pipe_fd[0], bytes, remaining);
+            if (n == 0)
+            {
+                complete_read = false;
+                break;
+            }
+            if (n < 0)
+            {
+                if (errno == EINTR)
+                {
+                    continue;
+                }
+                complete_read = false;
+                break;
+            }
+            bytes += n;
+            remaining -= static_cast<std::size_t>(n);
+        }
+        close(pipe_fd[0]);
+
+        int status = 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        {
+        }
+
+        if (!complete_read || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        {
+            TrajectoryTrialResult result;
+            if (WIFSIGNALED(status))
+            {
+                result.failure_reason = "trajectory_optimizer_crashed_signal_" + std::to_string(WTERMSIG(status));
+            }
+            else
+            {
+                result.failure_reason = "trajectory_optimizer_failed_without_result";
+            }
+            return result;
+        }
+
+        return fromPod(pod);
     }
 }
 

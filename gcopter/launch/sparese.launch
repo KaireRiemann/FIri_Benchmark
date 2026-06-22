@@ -16,6 +16,9 @@
   <arg name="point_seed_count" default="50"/>
   <arg name="line_seed_count_per_length" default="50"/>
   <arg name="planning_case_count" default="20"/>
+  <arg name="planning_min_distance" default="8.0"/>
+  <arg name="planning_max_distance" default="45.0"/>
+  <arg name="timeout_rrt" default="0.02"/>
   <arg name="repeats" default="5"/>
   <arg name="warmup_repeats" default="1"/>
   <arg name="enable_visualization" default="false"/>
@@ -38,6 +41,9 @@
     <arg name="point_seed_count" value="$(arg point_seed_count)"/>
     <arg name="line_seed_count_per_length" value="$(arg line_seed_count_per_length)"/>
     <arg name="planning_case_count" value="$(arg planning_case_count)"/>
+    <arg name="planning_min_distance" value="$(arg planning_min_distance)"/>
+    <arg name="planning_max_distance" value="$(arg planning_max_distance)"/>
+    <arg name="timeout_rrt" value="$(arg timeout_rrt)"/>
     <arg name="repeats" value="$(arg repeats)"/>
     <arg name="warmup_repeats" value="$(arg warmup_repeats)"/>
     <arg name="enable_visualization" value="$(arg enable_visualization)"/>

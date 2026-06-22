@@ -1,40 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <launch>
-  <arg name="density_label" default="medium"/>
+  <arg name="density" default="medium"/>
   <arg name="map_seed" default="1024"/>
   <arg name="master_seed" default="20260622"/>
-  <arg name="output_dir" default="/tmp/firi_benchmark"/>
-  <arg name="benchmark_mode" default="all"/>
+  <arg name="output_dir" default="/tmp/firi_global_planning_benchmark"/>
   <arg name="run_id" default=""/>
+  <arg name="planning_case_count" default="30"/>
 
   <arg name="resolution" default="0.25"/>
   <arg name="map_size_x" default="50.0"/>
   <arg name="map_size_y" default="50.0"/>
-  <arg name="map_size_z" default="8.0"/>
+  <arg name="map_size_z" default="5.0"/>
   <arg name="map_x_origin" default="-25.0"/>
   <arg name="map_y_origin" default="-25.0"/>
   <arg name="map_z_origin" default="0.0"/>
-  <arg name="map_frame_id" default="map"/>
+  <arg name="map_frame_id" default="odom"/>
 
-  <arg name="cylinder_ratio" default="0.06"/>
-  <arg name="circle_ratio" default="0.00"/>
+  <arg name="dilate_radius" default="0.5"/>
+  <arg name="timeout_rrt" default="0.02"/>
+  <arg name="corridor_progress" default="7.0"/>
+  <arg name="corridor_range" default="3.0"/>
+  <arg name="planning_min_distance" default="8.0"/>
+  <arg name="planning_max_distance" default="45.0"/>
+  <arg name="planning_sample_margin" default="0.5"/>
+
+  <arg name="cylinder_ratio"
+       default="$(eval 0.03 if arg('density') in ['sparse', 'sparese'] else (0.10 if arg('density') == 'dense' else 0.06))"/>
+  <arg name="circle_ratio"
+       default="$(eval 0.01 if arg('density') == 'dense' else 0.00)"/>
   <arg name="gate_ratio" default="0.00"/>
-  <arg name="ellip_ratio" default="0.00"/>
-  <arg name="poly_ratio" default="0.006"/>
+  <arg name="ellip_ratio"
+       default="$(eval 0.01 if arg('density') == 'dense' else 0.00)"/>
+  <arg name="poly_ratio"
+       default="$(eval 0.003 if arg('density') in ['sparse', 'sparese'] else (0.010 if arg('density') == 'dense' else 0.006))"/>
   <arg name="w1" default="0.10"/>
   <arg name="w2" default="0.50"/>
   <arg name="w3" default="2.00"/>
-
-  <arg name="point_seed_count" default="50"/>
-  <arg name="line_seed_count_per_length" default="50"/>
-  <arg name="planning_case_count" default="20"/>
-  <arg name="planning_min_distance" default="8.0"/>
-  <arg name="planning_max_distance" default="45.0"/>
-  <arg name="timeout_rrt" default="0.02"/>
-  <arg name="repeats" default="5"/>
-  <arg name="warmup_repeats" default="1"/>
-  <arg name="enable_visualization" default="false"/>
-  <arg name="rviz" default="false"/>
 
   <node pkg="param_env" type="structure_map" name="structure_map" output="screen">
     <remap from="~global_cloud" to="/voxel_map"/>
@@ -69,34 +70,28 @@
     <param name="dyn/dt" value="10.0"/>
   </node>
 
-  <node pkg="gcopter" type="firi_benchmark_node" name="firi_benchmark_node" output="screen" required="true">
-    <rosparam file="$(find gcopter)/config/firi_benchmark.yaml" command="load"/>
+  <node pkg="gcopter" type="global_planning_benchmark_node" name="global_planning_benchmark_node" output="screen" required="true">
+    <rosparam file="$(find gcopter)/config/global_planning.yaml" command="load"/>
     <param name="MapTopic" value="/voxel_map"/>
     <param name="OutputDir" value="$(arg output_dir)"/>
     <param name="RunId" value="$(arg run_id)"/>
-    <param name="DensityLabel" value="$(arg density_label)"/>
-    <param name="BenchmarkMode" value="$(arg benchmark_mode)"/>
+    <param name="DensityLabel" value="$(arg density)"/>
     <param name="MapSeed" value="$(arg map_seed)"/>
     <param name="MasterSeed" value="$(arg master_seed)"/>
     <param name="VoxelWidth" value="$(arg resolution)"/>
+    <param name="DilateRadius" value="$(arg dilate_radius)"/>
+    <param name="TimeoutRRT" value="$(arg timeout_rrt)"/>
+    <param name="CorridorProgress" value="$(arg corridor_progress)"/>
+    <param name="LocalRange" value="$(arg corridor_range)"/>
+    <param name="PlanningCaseCount" value="$(arg planning_case_count)"/>
+    <param name="PlanningMinDistance" value="$(arg planning_min_distance)"/>
+    <param name="PlanningMaxDistance" value="$(arg planning_max_distance)"/>
+    <param name="PlanningSampleMargin" value="$(arg planning_sample_margin)"/>
     <param name="MapOriginX" value="$(arg map_x_origin)"/>
     <param name="MapOriginY" value="$(arg map_y_origin)"/>
     <param name="MapOriginZ" value="$(arg map_z_origin)"/>
     <param name="MapSizeX" value="$(arg map_size_x)"/>
     <param name="MapSizeY" value="$(arg map_size_y)"/>
     <param name="MapSizeZ" value="$(arg map_size_z)"/>
-    <param name="PointSeedCount" value="$(arg point_seed_count)"/>
-    <param name="LineSeedCountPerLength" value="$(arg line_seed_count_per_length)"/>
-    <param name="PlanningCaseCount" value="$(arg planning_case_count)"/>
-    <param name="PlanningMinDistance" value="$(arg planning_min_distance)"/>
-    <param name="PlanningMaxDistance" value="$(arg planning_max_distance)"/>
-    <param name="TimeoutRRT" value="$(arg timeout_rrt)"/>
-    <param name="Repeats" value="$(arg repeats)"/>
-    <param name="WarmupRepeats" value="$(arg warmup_repeats)"/>
-    <param name="EnableVisualization" value="$(arg enable_visualization)"/>
-    <param name="VisualizationFrameId" value="$(arg map_frame_id)"/>
   </node>
-
-  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz"
-        args="-d $(find gcopter)/config/firi_benchmark.rviz"/>
 </launch>

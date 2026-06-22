@@ -314,6 +314,202 @@ def write_fig7_volume_ratio(region, output_dir, baseline="firi_legacy",
     return out
 
 
+def write_mvie_mechanism_summary(replay, output_dir):
+    metrics = [
+        "iterations",
+        "objective_evaluations",
+        "solve_ms",
+        "max_constraint_residual",
+        "log_volume_gap",
+    ]
+    required = ["density", "seed_type", "solver", "success"] + metrics
+    if replay.empty or any(c not in replay.columns for c in required):
+        return pd.DataFrame()
+
+    data = replay.copy()
+    for col in metrics + ["success"]:
+        data[col] = pd.to_numeric(data[col], errors="coerce")
+
+    rows = []
+    for key, group in data.groupby(["density", "seed_type", "solver"], dropna=False):
+        density, seed_type, solver = key
+        row = {
+            "density": density,
+            "seed_type": seed_type,
+            "solver": solver,
+            "count": int(len(group)),
+            "success_rate": float(group["success"].fillna(0).mean()),
+        }
+        for metric in metrics:
+            vals = group[metric].replace([np.inf, -np.inf], np.nan).dropna()
+            row[f"{metric}_median"] = vals.median()
+            row[f"{metric}_mean"] = vals.mean()
+            row[f"{metric}_p25"] = vals.quantile(0.25)
+            row[f"{metric}_p75"] = vals.quantile(0.75)
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    out.to_csv(output_dir / "mvie_mechanism_summary.csv", index=False)
+
+    display_cols = [
+        "density", "seed_type", "solver", "count", "success_rate",
+        "iterations_median", "objective_evaluations_median", "solve_ms_median",
+        "max_constraint_residual_median", "log_volume_gap_median",
+    ]
+    with (output_dir / "mvie_mechanism_summary.md").open("w") as f:
+        f.write("# MVIE LBFGS Mechanism Summary\n\n")
+        f.write("Values are grouped by replayed half-space input and solver. ")
+        f.write("`log_volume_gap` is measured against the best feasibility-scaled `logdet_l` in the paired replay.\n\n")
+        f.write("| " + " | ".join(display_cols) + " |\n")
+        f.write("| " + " | ".join(["---"] * len(display_cols)) + " |\n")
+        for _, row in out[display_cols].iterrows():
+            f.write("| " + " | ".join(str(row[col]) for col in display_cols) + " |\n")
+    return out
+
+
+def write_planning_time_summary(planning, output_dir):
+    metrics = [
+        "path_search_ms_shared",
+        "surface_extract_ms_shared",
+        "corridor_total_ms",
+        "trajectory_setup_ms",
+        "trajectory_optimize_ms",
+        "planning_backend_ms",
+        "end_to_end_ms",
+        "regions",
+        "route_length",
+        "trajectory_duration",
+    ]
+    required = ["density", "method", "success"] + metrics
+    if planning.empty or any(c not in planning.columns for c in required):
+        return pd.DataFrame(), pd.DataFrame()
+
+    data = planning.copy()
+    for col in metrics + [
+        "success",
+        "path_success",
+        "corridor_success",
+        "trajectory_optimize_success",
+        "trajectory_collision_free",
+    ]:
+        if col in data.columns:
+            data[col] = pd.to_numeric(data[col], errors="coerce")
+    data["sfc_pipeline_ms"] = (
+        data["path_search_ms_shared"] +
+        data["surface_extract_ms_shared"] +
+        data["corridor_total_ms"]
+    )
+
+    rows = []
+    for key, group in data.groupby(["density", "method"], dropna=False):
+        density, method = key
+        successful = group[group["success"].fillna(0) == 1]
+        corridor_successful = group[(group.get("path_success", 0).fillna(0) == 1) &
+                                    (group.get("corridor_success", 0).fillna(0) == 1)]
+        row = {
+            "density": density,
+            "method": method,
+            "count": int(len(group)),
+            "success_count": int(len(successful)),
+            "success_rate": float(group["success"].fillna(0).mean()),
+            "path_success_rate": float(group.get("path_success", pd.Series(dtype=float)).fillna(0).mean()),
+            "corridor_success_rate": float(group.get("corridor_success", pd.Series(dtype=float)).fillna(0).mean()),
+            "trajectory_optimize_success_rate": float(group.get("trajectory_optimize_success", pd.Series(dtype=float)).fillna(0).mean()),
+            "trajectory_collision_free_rate": float(group.get("trajectory_collision_free", pd.Series(dtype=float)).fillna(0).mean()),
+        }
+        sfc_vals = corridor_successful["sfc_pipeline_ms"].replace([np.inf, -np.inf], np.nan).dropna()
+        row["sfc_success_count"] = int(len(corridor_successful))
+        row["sfc_pipeline_ms_median"] = sfc_vals.median()
+        row["sfc_pipeline_ms_mean"] = sfc_vals.mean()
+        row["sfc_pipeline_ms_p25"] = sfc_vals.quantile(0.25)
+        row["sfc_pipeline_ms_p75"] = sfc_vals.quantile(0.75)
+        for metric in metrics:
+            vals = successful[metric].replace([np.inf, -np.inf], np.nan).dropna()
+            row[f"{metric}_median_success"] = vals.median()
+            row[f"{metric}_mean_success"] = vals.mean()
+            row[f"{metric}_p25_success"] = vals.quantile(0.25)
+            row[f"{metric}_p75_success"] = vals.quantile(0.75)
+        rows.append(row)
+
+    summary = pd.DataFrame(rows)
+    if not summary.empty:
+        summary.to_csv(output_dir / "planning_time_summary.csv", index=False)
+        display_cols = [
+            "density", "method", "count", "sfc_success_count", "success_count", "success_rate",
+            "sfc_pipeline_ms_median",
+            "planning_backend_ms_median_success", "end_to_end_ms_median_success",
+            "corridor_total_ms_median_success", "trajectory_optimize_ms_median_success",
+            "regions_median_success", "trajectory_duration_median_success",
+        ]
+        with (output_dir / "planning_time_summary.md").open("w") as f:
+            f.write("# Complete Planning Time Summary\n\n")
+            f.write("Timing columns are computed from successful complete planning trials only; failures are reflected in `success_rate`.\n\n")
+            f.write("| " + " | ".join(display_cols) + " |\n")
+            f.write("| " + " | ".join(["---"] * len(display_cols)) + " |\n")
+            for _, row in summary[display_cols].iterrows():
+                f.write("| " + " | ".join(str(row[col]) for col in display_cols) + " |\n")
+
+    pair_rows = []
+    pair_index = ["map_id", "planning_case_id", "repeat_id", "density"]
+    if all(c in data.columns for c in pair_index + ["method"]):
+        wide_success = data.pivot_table(index=pair_index, columns="method", values="success", aggfunc="first")
+        for metric in ["sfc_pipeline_ms", "planning_backend_ms", "end_to_end_ms", "corridor_total_ms", "trajectory_optimize_ms"]:
+            wide = data.pivot_table(index=pair_index, columns="method", values=metric, aggfunc="first")
+            if "firi_legacy" not in wide or "firi_hom" not in wide or wide_success.empty:
+                continue
+            paired = wide.join(wide_success, rsuffix="_success")
+            needed = ["firi_legacy", "firi_hom", "firi_legacy_success", "firi_hom_success"]
+            paired = paired.replace([np.inf, -np.inf], np.nan).dropna(subset=needed)
+            if metric == "sfc_pipeline_ms":
+                wide_path = data.pivot_table(index=pair_index, columns="method", values="path_success", aggfunc="first")
+                wide_corridor = data.pivot_table(index=pair_index, columns="method", values="corridor_success", aggfunc="first")
+                paired = paired.join(wide_path, rsuffix="_path").join(wide_corridor, rsuffix="_corridor")
+                paired = paired[(paired["firi_legacy_path"] == 1) &
+                                (paired["firi_hom_path"] == 1) &
+                                (paired["firi_legacy_corridor"] == 1) &
+                                (paired["firi_hom_corridor"] == 1)]
+            else:
+                paired = paired[(paired["firi_legacy_success"] == 1) & (paired["firi_hom_success"] == 1)]
+            paired = paired[(paired["firi_legacy"] > 0.0) & (paired["firi_hom"] > 0.0)]
+            if paired.empty:
+                continue
+            paired["speedup_legacy_over_hom"] = paired["firi_legacy"] / paired["firi_hom"]
+            paired["abs_diff_ms"] = paired["firi_legacy"] - paired["firi_hom"]
+            for density, group in paired.groupby(level="density", dropna=False):
+                speed = group["speedup_legacy_over_hom"].dropna()
+                diff = group["abs_diff_ms"].dropna()
+                pair_rows.append({
+                    "density": density,
+                    "metric": metric,
+                    "paired_success_count": int(len(group)),
+                    "speedup_median": speed.median(),
+                    "speedup_mean": speed.mean(),
+                    "speedup_p25": speed.quantile(0.25),
+                    "speedup_p75": speed.quantile(0.75),
+                    "abs_diff_ms_median": diff.median(),
+                    "abs_diff_ms_mean": diff.mean(),
+                })
+
+    speedup = pd.DataFrame(pair_rows)
+    if not speedup.empty:
+        speedup.to_csv(output_dir / "planning_paired_speedup.csv", index=False)
+        display_cols = [
+            "density", "metric", "paired_success_count", "speedup_median",
+            "speedup_mean", "abs_diff_ms_median", "abs_diff_ms_mean",
+        ]
+        with (output_dir / "planning_paired_speedup.md").open("w") as f:
+            f.write("# Complete Planning Paired Speedup\n\n")
+            f.write("Pairs include only trials where both methods completed successfully.\n\n")
+            f.write("| " + " | ".join(display_cols) + " |\n")
+            f.write("| " + " | ".join(["---"] * len(display_cols)) + " |\n")
+            for _, row in speedup[display_cols].iterrows():
+                f.write("| " + " | ".join(str(row[col]) for col in display_cols) + " |\n")
+
+    return summary, speedup
+
+
 def main():
     parser = argparse.ArgumentParser(description="Summarize and plot FIri benchmark CSV outputs.")
     parser.add_argument("input_dir")
@@ -334,7 +530,15 @@ def main():
     summaries = []
     summaries.append(metric_summary(region, ["density", "seed_type", "seed_length"], "method", "region_core_ms", "region"))
     summaries.append(metric_summary(region, ["density", "seed_type", "seed_length"], "method", "region_online_ms", "region"))
-    summaries.append(metric_summary(replay, ["density", "seed_type", "seed_length"], "solver", "solve_ms", "mvie_replay"))
+    for replay_metric in [
+        "iterations",
+        "objective_evaluations",
+        "solve_ms",
+        "max_constraint_residual",
+        "log_volume_gap",
+    ]:
+        summaries.append(metric_summary(replay, ["density", "seed_type", "seed_length"],
+                                        "solver", replay_metric, "mvie_replay"))
     summaries.append(metric_summary(corridor, ["density", "corridor_mode"], "method", "corridor_total_ms", "corridor"))
     summaries.append(metric_summary(planning, ["density"], "method", "planning_backend_ms", "planning"))
     summaries.append(metric_summary(planning, ["density"], "method", "end_to_end_ms", "planning"))
@@ -360,6 +564,8 @@ def main():
     write_table_iv(region, output_dir, "region_online_ms", "table_iv_online_time")
     write_fig7_volume_ratio(region, output_dir, min_volume=args.volume_min,
                             plot_stat=args.volume_plot_stat)
+    write_mvie_mechanism_summary(replay, output_dir)
+    write_planning_time_summary(planning, output_dir)
 
 
 if __name__ == "__main__":

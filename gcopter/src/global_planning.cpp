@@ -45,6 +45,8 @@ struct Config
     double smoothingEps;
     int integralIntervs;
     double relCostTol;
+    double corridorProgress;
+    double corridorRange;
 
     Config(const ros::NodeHandle &nh_priv)
     {
@@ -70,6 +72,8 @@ struct Config
         nh_priv.getParam("SmoothingEps", smoothingEps);
         nh_priv.getParam("IntegralIntervs", integralIntervs);
         nh_priv.getParam("RelCostTol", relCostTol);
+        nh_priv.param("CorridorProgress", corridorProgress, 7.0);
+        nh_priv.param("CorridorRange", corridorRange, 3.0);
     }
 };
 
@@ -90,13 +94,109 @@ private:
     Trajectory<5> traj;
     double trajStamp;
 
+    inline void makeOptimizerParams(Eigen::VectorXd &magnitudeBounds,
+                                    Eigen::VectorXd &penaltyWeights,
+                                    Eigen::VectorXd &physicalParams) const
+    {
+        magnitudeBounds.resize(5);
+        penaltyWeights.resize(5);
+        physicalParams.resize(6);
+
+        magnitudeBounds(0) = config.maxVelMag;
+        magnitudeBounds(1) = config.maxBdrMag;
+        magnitudeBounds(2) = config.maxTiltAngle;
+        magnitudeBounds(3) = config.minThrust;
+        magnitudeBounds(4) = config.maxThrust;
+        penaltyWeights(0) = (config.chiVec)[0];
+        penaltyWeights(1) = (config.chiVec)[1];
+        penaltyWeights(2) = (config.chiVec)[2];
+        penaltyWeights(3) = (config.chiVec)[3];
+        penaltyWeights(4) = (config.chiVec)[4];
+        physicalParams(0) = config.vehicleMass;
+        physicalParams(1) = config.gravAcc;
+        physicalParams(2) = config.horizDrag;
+        physicalParams(3) = config.vertDrag;
+        physicalParams(4) = config.parasDrag;
+        physicalParams(5) = config.speedEps;
+    }
+
+    inline double totalVolume(const std::vector<Eigen::MatrixX4d> &hPolys) const
+    {
+        double volume = 0.0;
+        for (const auto &hPoly : hPolys)
+        {
+            volume += sfc_gen_benchmark::calculateExactPolyhedronVolume(hPoly);
+        }
+        return volume;
+    }
+
+    inline bool optimizeCorridor(const std::string &label,
+                                 const std::vector<Eigen::MatrixX4d> &hPolys,
+                                 const Eigen::Matrix3d &iniState,
+                                 const Eigen::Matrix3d &finState,
+                                 Trajectory<5> &outTraj,
+                                 double &solveMs,
+                                 double &objective) const
+    {
+        outTraj.clear();
+        solveMs = 0.0;
+        objective = INFINITY;
+
+        if (hPolys.empty())
+        {
+            ROS_WARN_STREAM(label << " corridor is empty; skip trajectory optimization.");
+            return false;
+        }
+
+        gcopter::GCOPTER_PolytopeSFC gcopter;
+        Eigen::VectorXd magnitudeBounds;
+        Eigen::VectorXd penaltyWeights;
+        Eigen::VectorXd physicalParams;
+        makeOptimizerParams(magnitudeBounds, penaltyWeights, physicalParams);
+
+        const auto t0 = std::chrono::high_resolution_clock::now();
+        const bool setupOk = gcopter.setup(config.weightT,
+                                           iniState, finState,
+                                           hPolys, INFINITY,
+                                           config.smoothingEps,
+                                           config.integralIntervs,
+                                           magnitudeBounds,
+                                           penaltyWeights,
+                                           physicalParams);
+        if (!setupOk)
+        {
+            const auto t1 = std::chrono::high_resolution_clock::now();
+            solveMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            ROS_WARN_STREAM(label << " GCOPTER setup failed after " << solveMs << " ms.");
+            return false;
+        }
+
+        objective = gcopter.optimize(outTraj, config.relCostTol);
+        const auto t1 = std::chrono::high_resolution_clock::now();
+        solveMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+        if (std::isinf(objective) || outTraj.getPieceNum() <= 0)
+        {
+            outTraj.clear();
+            ROS_WARN_STREAM(label << " GCOPTER optimize failed after " << solveMs << " ms.");
+            return false;
+        }
+
+        ROS_INFO_STREAM(label << " GCOPTER success: pieces=" << outTraj.getPieceNum()
+                              << ", duration=" << outTraj.getTotalDuration()
+                              << " s, objective=" << objective
+                              << ", solve_ms=" << solveMs);
+        return true;
+    }
+
 public:
     GlobalPlanner(const Config &conf,
                   ros::NodeHandle &nh_)
         : config(conf),
           nh(nh_),
           mapInitialized(false),
-          visualizer(nh)
+          visualizer(nh),
+          trajStamp(0.0)
     {
         const Eigen::Vector3i xyz((config.mapBound[1] - config.mapBound[0]) / config.voxelWidth,
                                   (config.mapBound[3] - config.mapBound[2]) / config.voxelWidth,
@@ -143,139 +243,114 @@ public:
 
     inline void plan()
     {
-        if (startGoal.size() == 2)
+        if (startGoal.size() != 2)
         {
-            std::vector<Eigen::Vector3d> route;
+            return;
+        }
+
+        std::vector<Eigen::Vector3d> route;
+        const double pathCost =
             sfc_gen::planPath<voxel_map::VoxelMap>(startGoal[0],
                                                    startGoal[1],
                                                    voxelMap.getOrigin(),
                                                    voxelMap.getCorner(),
-                                                   &voxelMap, 0.01,
+                                                   &voxelMap,
+                                                   config.timeoutRRT,
                                                    route);
-            std::vector<Eigen::Vector3d> pc;
-            voxelMap.getSurf(pc);
-
-            if (route.size() > 1)
-            {
-                const sfc_gen_benchmark::BenchmarkResult benchmark =
-                    sfc_gen_benchmark::convexCover(route,
-                                                   pc,
-                                                   voxelMap.getOrigin(),
-                                                   voxelMap.getCorner(),
-                                                   7.0,
-                                                   3.0);
-                benchmark.printBenchmarkResult();
-
-                std::vector<Eigen::MatrixX4d> hPolys = benchmark.firi.hpolys;
-                std::vector<Eigen::MatrixX4d> hPolys_opt = benchmark.firi_opt.hpolys;
-                std::vector<Eigen::MatrixX4d> hPolys_nd = benchmark.firi_nd.hpolys;
-
-                sfc_gen_benchmark::shortCut(hPolys);
-                sfc_gen_benchmark::shortCut(hPolys_opt);
-                sfc_gen_benchmark::shortCut(hPolys_nd);
-
-                std::vector<double> firi_mesh_color = {0.0, 0.0, 1.0, 0.85};  
-                std::vector<double> firi_edge_color = {0.0, 1.0, 1.0, 1.0}; 
-                visualizer.visualizePolytope(hPolys,"firi",firi_mesh_color,firi_edge_color);
-                double firi_volume = 0.0;
-                for(size_t i = 0; i < hPolys.size(); i++)
-                {
-                    const double v1 = sfc_gen_benchmark::calculateExactPolyhedronVolume(hPolys[i]);
-                    firi_volume += v1;
-                }
-                
-
-                std::vector<double> opt_mesh_color = {1.0, 0.45, 0.0, 0.18};  
-                std::vector<double> opt_edge_color = {1.0, 0.45, 0.0, 1.0};
-                visualizer.visualizePolytope(hPolys_opt, "firi_opt", opt_mesh_color, opt_edge_color);
-                double firi_opt_volume = 0.0;
-                for(size_t i = 0; i < hPolys_opt.size(); i++)
-                {
-                    const double v2 = sfc_gen_benchmark::calculateExactPolyhedronVolume(hPolys_opt[i]);
-                    firi_opt_volume += v2;
-                }
-
-                std::vector<double> nd_mesh_color = {0.0, 0.8, 0.2, 0.15};  
-                std::vector<double> nd_edge_color = {0.0, 0.8, 0.2, 1.0};
-                visualizer.visualizePolytope(hPolys_nd, "firi_nd", nd_mesh_color, nd_edge_color);
-                double firi_nd_volume = 0.0;
-                for(size_t i = 0; i < hPolys_nd.size(); i++)
-                {
-                    const double v3 = sfc_gen_benchmark::calculateExactPolyhedronVolume(hPolys_nd[i]);
-                    firi_nd_volume += v3;
-                }
-                
-                if (firi_volume > 0.0)
-                {
-                    std::cout<<"firi_opt/firi volume ratio : "<<firi_opt_volume / firi_volume<<std::endl;
-                    std::cout<<"firi_nd/firi volume ratio : "<<firi_nd_volume / firi_volume<<std::endl;
-                }
-
-                Eigen::Matrix3d iniState;
-                Eigen::Matrix3d finState;
-                iniState << route.front(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
-                finState << route.back(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
-
-                gcopter::GCOPTER_PolytopeSFC gcopter;
-                //gcopter_bs::GCOPTER_PolytopeSFC gcopter_bs;
-
-                // magnitudeBounds = [v_max, omg_max, theta_max, thrust_min, thrust_max]^T
-                // penaltyWeights = [pos_weight, vel_weight, omg_weight, theta_weight, thrust_weight]^T
-                // physicalParams = [vehicle_mass, gravitational_acceleration, horitonral_drag_coeff,
-                //                   vertical_drag_coeff, parasitic_drag_coeff, speed_smooth_factor]^T
-                // initialize some constraint parameters
-                Eigen::VectorXd magnitudeBounds(5);
-                Eigen::VectorXd penaltyWeights(5);
-                Eigen::VectorXd physicalParams(6);
-                magnitudeBounds(0) = config.maxVelMag;
-                magnitudeBounds(1) = config.maxBdrMag;
-                magnitudeBounds(2) = config.maxTiltAngle;
-                magnitudeBounds(3) = config.minThrust;
-                magnitudeBounds(4) = config.maxThrust;
-                penaltyWeights(0) = (config.chiVec)[0];
-                penaltyWeights(1) = (config.chiVec)[1];
-                penaltyWeights(2) = (config.chiVec)[2];
-                penaltyWeights(3) = (config.chiVec)[3];
-                penaltyWeights(4) = (config.chiVec)[4];
-                physicalParams(0) = config.vehicleMass;
-                physicalParams(1) = config.gravAcc;
-                physicalParams(2) = config.horizDrag;
-                physicalParams(3) = config.vertDrag;
-                physicalParams(4) = config.parasDrag;
-                physicalParams(5) = config.speedEps;
-                const int quadratureRes = config.integralIntervs;
-
-                traj.clear();
-
-                if (hPolys_nd.empty())
-                {
-                    return;
-                }
-
-                if (!gcopter.setup(config.weightT,
-                                   iniState, finState,
-                                   hPolys_nd, INFINITY,
-                                   config.smoothingEps,
-                                   quadratureRes,
-                                   magnitudeBounds,
-                                   penaltyWeights,
-                                   physicalParams))
-                {
-                    return;
-                }
-
-                if (std::isinf(gcopter.optimize(traj, config.relCostTol)))
-                {
-                    return;
-                }
-
-                if (traj.getPieceNum() > 0)
-                {
-                    trajStamp = ros::Time::now().toSec();
-                    visualizer.visualize(traj, route);
-                }
-            }
+        if (route.size() <= 1)
+        {
+            traj.clear();
+            ROS_WARN_STREAM("RRT front-end failed. timeout_rrt=" << config.timeoutRRT
+                            << " s, cost=" << pathCost);
+            return;
         }
+
+        std::vector<Eigen::Vector3d> pc;
+        voxelMap.getSurf(pc);
+
+        const sfc_gen_benchmark::BenchmarkResult benchmark =
+            sfc_gen_benchmark::convexCover(route,
+                                           pc,
+                                           voxelMap.getOrigin(),
+                                           voxelMap.getCorner(),
+                                           config.corridorProgress,
+                                           config.corridorRange);
+        benchmark.printBenchmarkResult();
+
+        std::vector<Eigen::MatrixX4d> firiPolys = benchmark.firi.hpolys;
+        std::vector<Eigen::MatrixX4d> homPolys = benchmark.firi_nd.hpolys;
+        sfc_gen_benchmark::shortCut(firiPolys);
+        sfc_gen_benchmark::shortCut(homPolys);
+
+        const std::vector<double> firiMeshColor = {0.0, 0.20, 1.0, 0.16};
+        const std::vector<double> firiEdgeColor = {0.0, 0.70, 1.0, 1.0};
+        const std::vector<double> homMeshColor = {1.0, 0.45, 0.0, 0.20};
+        const std::vector<double> homEdgeColor = {1.0, 0.45, 0.0, 1.0};
+        visualizer.visualizePolytope(firiPolys, "baseline_firi", firiMeshColor, firiEdgeColor);
+        visualizer.visualizePolytope(homPolys, "hom_mvie", homMeshColor, homEdgeColor);
+
+        const double firiVolume = totalVolume(firiPolys);
+        const double homVolume = totalVolume(homPolys);
+        ROS_INFO_STREAM("Corridor comparison: route_points=" << route.size()
+                        << ", rrt_cost=" << pathCost
+                        << ", firi_polys=" << firiPolys.size()
+                        << ", hom_polys=" << homPolys.size()
+                        << ", firi_volume=" << firiVolume
+                        << ", hom_volume=" << homVolume
+                        << ", hom/firi_volume="
+                        << (firiVolume > 0.0 ? homVolume / firiVolume : 0.0));
+
+        Eigen::Matrix3d iniState;
+        Eigen::Matrix3d finState;
+        iniState << route.front(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
+        finState << route.back(), Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero();
+
+        Trajectory<5> firiTraj;
+        double firiSolveMs = 0.0;
+        double firiObjective = INFINITY;
+        double homSolveMs = 0.0;
+        double homObjective = INFINITY;
+
+        const bool firiOk = optimizeCorridor("baseline_firi",
+                                             firiPolys,
+                                             iniState,
+                                             finState,
+                                             firiTraj,
+                                             firiSolveMs,
+                                             firiObjective);
+        const bool homOk = optimizeCorridor("hom_mvie",
+                                            homPolys,
+                                            iniState,
+                                            finState,
+                                            traj,
+                                            homSolveMs,
+                                            homObjective);
+
+        if (firiOk)
+        {
+            visualizer.visualize(firiTraj, route);
+            visualizer.visualizeTrajectory(firiTraj,
+                                           "trajectory_baseline_firi",
+                                           0,
+                                           {0.0, 0.50, 1.0, 1.0},
+                                           0.30);
+        }
+        if (homOk)
+        {
+            trajStamp = ros::Time::now().toSec();
+            visualizer.visualizeTrajectory(traj,
+                                           "trajectory_hom_mvie",
+                                           1,
+                                           {1.0, 0.45, 0.0, 1.0},
+                                           0.36);
+        }
+
+        ROS_INFO_STREAM("Planning comparison: baseline_firi_success=" << firiOk
+                        << ", hom_mvie_success=" << homOk
+                        << ", baseline_firi_solve_ms=" << firiSolveMs
+                        << ", hom_mvie_solve_ms=" << homSolveMs
+                        << ", baseline_firi_objective=" << firiObjective
+                        << ", hom_mvie_objective=" << homObjective);
     }
 
     inline void targetCallBack(const geometry_msgs::PoseStamped::ConstPtr &msg)

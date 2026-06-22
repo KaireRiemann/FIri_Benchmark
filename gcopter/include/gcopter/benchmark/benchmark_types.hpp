@@ -114,8 +114,8 @@ namespace firi_benchmark
             "run_id", "map_id", "density", "region_case_id", "outer_iteration", "seed_type",
             "seed_length", "facet_count", "local_point_count", "input_hash", "warm_start_hash",
             "solver", "repeat_id", "order_index", "success", "status", "iterations",
-            "objective_evaluations", "solve_ms", "logdet_l", "max_mu",
-            "max_constraint_residual", "active_constraint_count", "finite_output",
+            "objective_evaluations", "solve_ms", "logdet_l", "feasible_logdet_l",
+            "log_volume_gap", "max_mu", "max_constraint_residual", "active_constraint_count", "finite_output",
             "positive_diagonal", "failure_reason"};
         return header;
     }

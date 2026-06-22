@@ -181,11 +181,12 @@ namespace firi_benchmark
                 stats.failure_reason = region_stats.failure_reason;
                 continue;
             }
-            if (!seedIncluded(output.hpoly, region_case.a, region_case.b, options.mvie_options.feasibility_tolerance))
+            const Eigen::MatrixX4d bounded_hpoly = stackHpolys(output.hpoly, region_case.boundary);
+            if (!seedIncluded(bounded_hpoly, region_case.a, region_case.b, options.mvie_options.feasibility_tolerance))
             {
                 ++stats.seed_inclusion_failures;
             }
-            stats.hpolys.push_back(output.hpoly);
+            stats.hpolys.push_back(bounded_hpoly);
         }
         stats.regions_before_shortcut = static_cast<int>(stats.hpolys.size());
         fillCorridorMetrics(stats, nullptr, options.mvie_options.feasibility_tolerance);
@@ -226,7 +227,8 @@ namespace firi_benchmark
                 stats.failure_reason = region_stats.failure_reason;
                 continue;
             }
-            if (needGapPolytope(stats.hpolys, output.hpoly, region_case.a, options.geometric_epsilon))
+            const Eigen::MatrixX4d bounded_hpoly = stackHpolys(output.hpoly, region_case.boundary);
+            if (needGapPolytope(stats.hpolys, bounded_hpoly, region_case.a, options.geometric_epsilon))
             {
                 RegionCase gap_case = region_case;
                 gap_case.b = gap_case.a;
@@ -243,14 +245,14 @@ namespace firi_benchmark
                 stats.gap_region_ms += gap_stats.total_region_ms;
                 if (gap_stats.success)
                 {
-                    stats.hpolys.push_back(gap_output.hpoly);
+                    stats.hpolys.push_back(stackHpolys(gap_output.hpoly, gap_case.boundary));
                 }
             }
-            if (!seedIncluded(output.hpoly, region_case.a, region_case.b, options.mvie_options.feasibility_tolerance))
+            if (!seedIncluded(bounded_hpoly, region_case.a, region_case.b, options.mvie_options.feasibility_tolerance))
             {
                 ++stats.seed_inclusion_failures;
             }
-            stats.hpolys.push_back(output.hpoly);
+            stats.hpolys.push_back(bounded_hpoly);
         }
 
         stats.regions_before_shortcut = static_cast<int>(stats.hpolys.size());

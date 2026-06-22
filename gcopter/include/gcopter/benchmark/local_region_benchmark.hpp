@@ -9,6 +9,8 @@
 #include "gcopter/region_inflation/mvie_legacy.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <memory>
 
 namespace firi_benchmark
@@ -192,13 +194,29 @@ namespace firi_benchmark
         return solver.solve(replay_case.hpoly, warm_start, options, stats);
     }
 
+    inline double feasibilityScaledLogdet(const region_inflation::MvieStats &stats)
+    {
+        if (!stats.finite_output ||
+            !stats.positive_diagonal ||
+            !std::isfinite(stats.logdet_l) ||
+            !std::isfinite(stats.max_mu) ||
+            !(stats.max_mu > 0.0))
+        {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        const double scale = stats.max_mu > 1.0 ? 1.0 / stats.max_mu : 1.0;
+        return stats.logdet_l + 3.0 * std::log(scale);
+    }
+
     inline void writeMvieReplayRow(CsvWriter &writer,
                                    const std::string &run_id,
                                    const region_inflation::MvieReplayCase &replay_case,
                                    const region_inflation::MethodConfig &method,
                                    const int repeat_id,
                                    const int order_index,
-                                   const region_inflation::MvieStats &stats)
+                                   const region_inflation::MvieStats &stats,
+                                   const double feasible_logdet_l,
+                                   const double log_volume_gap)
     {
         writer.writeRow(run_id,
                         replay_case.map_id,
@@ -220,6 +238,8 @@ namespace firi_benchmark
                         stats.objective_evaluations,
                         stats.solve_ms,
                         stats.logdet_l,
+                        feasible_logdet_l,
+                        log_volume_gap,
                         stats.max_mu,
                         stats.max_constraint_residual,
                         stats.active_constraint_count,
@@ -236,6 +256,14 @@ namespace firi_benchmark
                                        const int warmup_repeats,
                                        CsvWriter &writer)
     {
+        struct ReplaySolveRecord
+        {
+            const region_inflation::MethodConfig *method = nullptr;
+            int order_index = 0;
+            region_inflation::MvieStats stats;
+            double feasible_logdet_l = std::numeric_limits<double>::quiet_NaN();
+        };
+
         for (const region_inflation::MvieReplayCase &replay_case : replay_cases)
         {
             for (int repeat = -warmup_repeats; repeat < repeats; ++repeat)
@@ -251,20 +279,48 @@ namespace firi_benchmark
                     std::reverse(order.begin(), order.end());
                 }
 
+                std::vector<ReplaySolveRecord> records;
+                records.reserve(order.size());
                 for (std::size_t order_index = 0; order_index < order.size(); ++order_index)
                 {
                     const region_inflation::MethodConfig &method = methods[order[order_index]];
-                    region_inflation::MvieStats stats;
-                    solveReplayCase(replay_case, method, options, stats);
-                    if (repeat >= 0)
+                    ReplaySolveRecord record;
+                    record.method = &method;
+                    record.order_index = static_cast<int>(order_index);
+                    solveReplayCase(replay_case, method, options, record.stats);
+                    record.feasible_logdet_l = feasibilityScaledLogdet(record.stats);
+                    records.push_back(record);
+                }
+
+                if (repeat >= 0)
+                {
+                    double best_logdet = -std::numeric_limits<double>::infinity();
+                    for (const ReplaySolveRecord &record : records)
                     {
+                        if (std::isfinite(record.feasible_logdet_l))
+                        {
+                            best_logdet = std::max(best_logdet, record.feasible_logdet_l);
+                        }
+                    }
+
+                    const bool has_best = std::isfinite(best_logdet);
+                    for (const ReplaySolveRecord &record : records)
+                    {
+                        double log_volume_gap = std::numeric_limits<double>::quiet_NaN();
+                        if (has_best && std::isfinite(record.feasible_logdet_l))
+                        {
+                            log_volume_gap = std::max(0.0, best_logdet - record.feasible_logdet_l);
+                        }
+
                         writeMvieReplayRow(writer,
                                            run_id,
                                            replay_case,
-                                           method,
+                                           *record.method,
                                            repeat,
-                                           static_cast<int>(order_index),
-                                           stats);
+                                           record.order_index,
+                                           record.stats,
+                                           record.feasible_logdet_l,
+                                           log_volume_gap);
                     }
                 }
             }

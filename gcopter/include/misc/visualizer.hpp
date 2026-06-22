@@ -9,6 +9,7 @@
 #include <memory>
 #include <chrono>
 #include <cmath>
+#include <map>
 
 #include <ros/ros.h>
 #include <std_msgs/Float64.h>
@@ -33,6 +34,32 @@ private:
     ros::Publisher meshPub;
     ros::Publisher edgePub;
     ros::Publisher spherePub;
+    std::map<std::string, ros::Publisher> markerTopicPubs;
+
+    inline ros::Publisher &markerPublisher(const std::string &topic)
+    {
+        auto it = markerTopicPubs.find(topic);
+        if (it == markerTopicPubs.end())
+        {
+            it = markerTopicPubs.emplace(topic,
+                                         nh.advertise<visualization_msgs::Marker>(topic, 10, true))
+                     .first;
+        }
+        return it->second;
+    }
+
+    inline std::string methodTopicPrefix(const std::string &ns_name) const
+    {
+        if (ns_name.find("baseline_firi") != std::string::npos)
+        {
+            return "/visualizer/baseline_firi";
+        }
+        if (ns_name.find("hom_mvie") != std::string::npos)
+        {
+            return "/visualizer/hom_mvie";
+        }
+        return "";
+    }
 
 public:
     ros::Publisher speedPub;
@@ -44,12 +71,12 @@ public:
     Visualizer(ros::NodeHandle &nh_)
         : nh(nh_)
     {
-        routePub = nh.advertise<visualization_msgs::Marker>("/visualizer/route", 10);
-        wayPointsPub = nh.advertise<visualization_msgs::Marker>("/visualizer/waypoints", 10);
-        trajectoryPub = nh.advertise<visualization_msgs::Marker>("/visualizer/trajectory", 10);
-        meshPub = nh.advertise<visualization_msgs::Marker>("/visualizer/mesh", 1000);
-        edgePub = nh.advertise<visualization_msgs::Marker>("/visualizer/edge", 1000);
-        spherePub = nh.advertise<visualization_msgs::Marker>("/visualizer/spheres", 1000);
+        routePub = nh.advertise<visualization_msgs::Marker>("/visualizer/route", 10, true);
+        wayPointsPub = nh.advertise<visualization_msgs::Marker>("/visualizer/waypoints", 10, true);
+        trajectoryPub = nh.advertise<visualization_msgs::Marker>("/visualizer/trajectory", 10, true);
+        meshPub = nh.advertise<visualization_msgs::Marker>("/visualizer/mesh", 1000, true);
+        edgePub = nh.advertise<visualization_msgs::Marker>("/visualizer/edge", 1000, true);
+        spherePub = nh.advertise<visualization_msgs::Marker>("/visualizer/spheres", 1000, true);
         speedPub = nh.advertise<std_msgs::Float64>("/visualizer/speed", 1000);
         thrPub = nh.advertise<std_msgs::Float64>("/visualizer/total_thrust", 1000);
         tiltPub = nh.advertise<std_msgs::Float64>("/visualizer/tilt_angle", 1000);
@@ -158,6 +185,57 @@ public:
                 lastX = X;
             }
             trajectoryPub.publish(trajMarker);
+        }
+    }
+
+    template <int D>
+    inline void visualizeTrajectory(const Trajectory<D> &traj,
+                                    const std::string &ns_name,
+                                    const int marker_id,
+                                    const std::vector<double> &color,
+                                    const double scale)
+    {
+        if (traj.getPieceNum() <= 0)
+        {
+            return;
+        }
+
+        visualization_msgs::Marker trajMarker;
+        trajMarker.id = marker_id;
+        trajMarker.type = visualization_msgs::Marker::LINE_LIST;
+        trajMarker.header.stamp = ros::Time::now();
+        trajMarker.header.frame_id = "odom";
+        trajMarker.pose.orientation.w = 1.00;
+        trajMarker.action = visualization_msgs::Marker::ADD;
+        trajMarker.ns = ns_name;
+        trajMarker.color.r = color.size() > 0 ? color[0] : 1.00;
+        trajMarker.color.g = color.size() > 1 ? color[1] : 0.45;
+        trajMarker.color.b = color.size() > 2 ? color[2] : 0.00;
+        trajMarker.color.a = color.size() > 3 ? color[3] : 1.00;
+        trajMarker.scale.x = scale;
+
+        constexpr double dt = 0.01;
+        Eigen::Vector3d lastX = traj.getPos(0.0);
+        for (double t = dt; t < traj.getTotalDuration(); t += dt)
+        {
+            geometry_msgs::Point point;
+            const Eigen::Vector3d X = traj.getPos(t);
+            point.x = lastX(0);
+            point.y = lastX(1);
+            point.z = lastX(2);
+            trajMarker.points.push_back(point);
+            point.x = X(0);
+            point.y = X(1);
+            point.z = X(2);
+            trajMarker.points.push_back(point);
+            lastX = X;
+        }
+
+        trajectoryPub.publish(trajMarker);
+        const std::string topicPrefix = methodTopicPrefix(ns_name);
+        if (!topicPrefix.empty())
+        {
+            markerPublisher(topicPrefix + "/trajectory").publish(trajMarker);
         }
     }
 
@@ -344,6 +422,12 @@ public:
         // 假设 meshPub 和 edgePub 是类成员变量或全局变量
         meshPub.publish(meshMarker);
         edgePub.publish(edgeMarker);
+        const std::string topicPrefix = methodTopicPrefix(ns_name);
+        if (!topicPrefix.empty())
+        {
+            markerPublisher(topicPrefix + "/mesh").publish(meshMarker);
+            markerPublisher(topicPrefix + "/edge").publish(edgeMarker);
+        }
     }
 
     // Visualize all spheres with centers sphs and the same radius
